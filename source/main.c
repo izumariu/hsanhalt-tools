@@ -28,10 +28,19 @@ void drawRect(uint32_t, uint32_t, uint32_t, uint32_t, uint8_t,
 void drawBackground();
 void drawTextAtOffset(int, int, char*, uint8_t);
 void drawCenteredTextAtOffset(int, char*, uint8_t);
-void findNextStart(time_t now);
+void findNextStart();
 int readSchedule(char*);
 void scheduleError(int);
-//double log_bin(double);
+void showTimeUntilNextLecture();
+
+struct __lecture_struct__ {
+  char title[42];
+  char lecturer[54];
+  uint32_t start;
+  uint32_t end;
+};
+
+struct __lecture_struct__ nextLecture;
 
 int main() {
 
@@ -39,6 +48,9 @@ int main() {
   nxlinkStdio();
   gfxInitDefault();
   fbuf = gfxGetFramebuffer(&scr_bounds[0], &scr_bounds[1]);
+
+  nextLecture.start = 0;
+  nextLecture.end = 0;
 
   int schedRes = readSchedule("/hsanhalt/timetable.sched");
 
@@ -53,29 +65,27 @@ int main() {
 
   char* remainingTime = malloc(sizeof(char)*6);
 
-  uint32_t timeleft_i = 9000;
-
   while(appletMainLoop()) {
 
-    uint32_t start = 1540188000ul;
-    time_t unixTime = time(NULL);
-    struct tm* timeStruct = gmtime((const time_t*) &unixTime);
-    //printf("\x1b[2;1HCurrent time in Koethen is %02i:%02i:%02i | %0lu", (timeStruct->tm_hour + 2), timeStruct->tm_min, timeStruct->tm_sec, unixTime);
+    findNextStart();
 
-    time_t timeLeftUT = start - unixTime;
+    if(nextLecture.end == 0) {
+
+      showTimeUntilNextLecture();
+      goto _end_of_mainloop_;
+
+    }
+
+    time_t now = time(NULL);
+    time_t timeLeftUT = difftime(nextLecture.end, now);
+
     struct tm* timeLeft = gmtime((const time_t*) &timeLeftUT);
-    //printf("\x1b[3;1HTime left until 2018-10-22 08:00:00 -> %02i:%02i:%02i", timeLeft->tm_hour, timeLeft->tm_min, timeLeft->tm_sec);
 
-    usleep(100); // just so we dont use 100% of the cpu lol
-
-    hidScanInput();
-    if(hidKeysDown(CONTROLLER_P1_AUTO) & KEY_PLUS) break;
-
-    sprintf(remainingTime, "%02i:%02i\0", timeleft_i / 100, timeleft_i % 100);
+    sprintf(remainingTime, "%02i:%02i\0", (timeLeft->tm_hour * 60 + timeLeft->tm_min), timeLeft->tm_sec);
 
     drawBackground();
-    drawCenteredTextAtOffset(TITLE_OFFSET, "VORLESUNG: MEDIENGESTALTUNG\0", 4); // 18 chars ideal!
-    drawCenteredTextAtOffset(LECTURER_OFFSET, "PROF. DR. STEFAN SCHLECHTWEG\0", 3);
+    drawCenteredTextAtOffset(TITLE_OFFSET, "VORLESUNG: MEDIENGESTALTUNG\0", 4); // 42 chars max
+    drawCenteredTextAtOffset(LECTURER_OFFSET, "PROF. DR. STEFAN SCHLECHTWEG\0", 3); // 54 chars max
     drawCenteredTextAtOffset(TIME_OFFSET, remainingTime, 27);
 
     #ifdef TIMETEXT_OFFSET
@@ -83,12 +93,17 @@ int main() {
     #endif
 
     drawScreen();
-    usleep(MS_US(1000));
 
+    _end_of_mainloop_:
+
+    hidScanInput();
+    if(hidKeysDown(CONTROLLER_P1_AUTO) & KEY_PLUS) break;
+    usleep(MS_US(100)); // just so we dont use 100% of the cpu lol
+/*
     if(timeleft_i == 0) timeleft_i = 9000;
     else if(timeleft_i % 100 == 0) timeleft_i -= 41;
     else timeleft_i--;
-
+*/
   }
 
   _exit:
@@ -122,7 +137,7 @@ void drawRect(uint32_t x, uint32_t y, uint32_t xt_x, uint32_t xt_y, uint8_t cr,
 
   if (x+xt_x > 1280 || y+xt_y > 720) return;
 
-  printf("Drawing rectangle at ( %4u | %4u ) with size %4u x %4u\n", x, y, xt_x, xt_y);
+  //printf("Drawing rectangle at ( %4u | %4u ) with size %4u x %4u\n", x, y, xt_x, xt_y);
 
   for (int r = y; r <= y+xt_y; r++) {
     for (int c = x; c <= x+xt_x; c++) {
@@ -200,7 +215,83 @@ void drawCenteredTextAtOffset(int y, char *text, uint8_t mult) {
 
 }
 
-void findNextStart(time_t now) {
+void findNextStart() {
+
+  struct __lecture_struct__ selectedLecture;
+
+  unsigned short chunk_size = 112;
+
+  time_t now = time(NULL);
+  //printf("SCHEDLEN %% chunk_size = %li\n", schedlen % chunk_size);
+
+  if((difftime(nextLecture.start, now) <= 0 && difftime(nextLecture.end, now) > 0)) return;
+  printf("No lecture currently running(or not detected).\n");
+
+  if(schedlen % chunk_size != 0) {
+    nextLecture.start = 0;
+    nextLecture.end = 0;
+    return;
+  }
+
+  /*
+    lectures are chunks of {chunk_size}(112) bytes:
+    8 bytes for start and end (both unix time)
+    + 42 bytes for lecture name (padded with zerobytes)
+    + 54 bytes for lecturer name (padded with zerobytes)
+    + 8 bytes for room name (padded with zerobytes(if neccessary))
+  */
+
+  uint32_t offset = 0;
+  uint8_t lectureFound = 0;
+
+  do {
+
+    selectedLecture.start = (sched[offset + 0] << 24)
+      + (sched[offset + 1] << 16)
+      + (sched[offset + 2] << 8)
+      + (sched[offset + 3]);
+    selectedLecture.end = (sched[offset + 4] << 24)
+      + (sched[offset + 5] << 16)
+      + (sched[offset + 6] << 8)
+      + (sched[offset + 7]);
+
+    for(int i = 0; i < 42; i++) selectedLecture.title[i] = sched[offset+8+i];
+    for(int i = 0; i < 54; i++) selectedLecture.lecturer[i] = sched[offset+50+i];
+
+    printf(
+      "Found lecture by '%s': '%s' at timestamp %u | DIFFTIME: %i\n",
+      selectedLecture.lecturer,
+      selectedLecture.title,
+      selectedLecture.start,
+      (int)difftime(selectedLecture.start, now)
+    );
+
+    if(difftime(selectedLecture.start, now) <= 0 && difftime(selectedLecture.end, now) > 0) {
+      lectureFound = 1;
+      break;
+    }
+
+    offset += 112;
+
+  } while((schedlen - 1 > offset) && !(difftime(selectedLecture.start, now) <= 0 && difftime(selectedLecture.end, now) > 0));
+
+  if(lectureFound == 1) {
+    for(int i = 0; i < 42; i++) nextLecture.title[i] = selectedLecture.title[i];
+    for(int i = 0; i < 54; i++) nextLecture.lecturer[i] = selectedLecture.lecturer[i];
+    nextLecture.start = selectedLecture.start;
+    nextLecture.end = selectedLecture.end;
+    printf(
+      "NEXT Lecture by '%s': '%s' at timestamp %u < %lu < %u\n",
+      nextLecture.lecturer,
+      nextLecture.title,
+      nextLecture.start,
+      now,
+      nextLecture.end
+    );
+  } else {
+    nextLecture.start = 0;
+    nextLecture.end = 0;
+  }
 
 }
 
@@ -209,19 +300,12 @@ int readSchedule(char* path) {
   FILE *f = fopen(path, "r");
   if(f == NULL) return 1;
 
-  printf("fseek(f, 0, SEEK_END);\n");
   fseek(f, 0, SEEK_END);
-  printf("length = ftell(f);\n");
   schedlen = ftell(f);
-  printf("fseek(f, 0, SEEK_SET);\n");
   fseek(f, 0, SEEK_SET);
-  printf("sched = malloc(length);\n");
   sched = malloc(schedlen);
-  printf("if(sched == NULL) return 2;\n");
   if(sched == NULL) return 2;
-  printf("fread(sched, 1, length, f);\n");
   fread(sched, 1, schedlen, f);
-  printf("fclose(f);\n");
   fclose(f);
 
   return 0;
@@ -246,5 +330,18 @@ void scheduleError(int err) {
       break;
   }
   drawCenteredTextAtOffset(offset2, "PRESS PLUS TO EXIT...\0", 4);
+  drawScreen();
+}
+
+void showTimeUntilNextLecture() {
+
+  uint32_t offset = 50;
+
+  drawBackground();
+  drawCenteredTextAtOffset(offset, "NO LECTURE CURRENTLY RUNNING\0", 4);
+  drawCenteredTextAtOffset(offset + 4*10+5, "NEXT LECTURE:\0", 3);
+
+  if(nextLecture.start == 0) drawCenteredTextAtOffset(offset + 4*10+5 + 3*10+5, "NO LECTURES LEFT.\0", 3);
+
   drawScreen();
 }
