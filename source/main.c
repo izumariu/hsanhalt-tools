@@ -32,6 +32,7 @@ void findNextStart();
 int readSchedule(char*);
 void scheduleError(int);
 void showTimeUntilNextLecture();
+int lectureRunning = 0;
 
 struct __lecture_struct__ {
   char title[42];
@@ -84,8 +85,8 @@ int main() {
     sprintf(remainingTime, "%02i:%02i\0", (timeLeft->tm_hour * 60 + timeLeft->tm_min), timeLeft->tm_sec);
 
     drawBackground();
-    drawCenteredTextAtOffset(TITLE_OFFSET, "VORLESUNG: MEDIENGESTALTUNG\0", 4); // 42 chars max
-    drawCenteredTextAtOffset(LECTURER_OFFSET, "PROF. DR. STEFAN SCHLECHTWEG\0", 3); // 54 chars max
+    drawCenteredTextAtOffset(TITLE_OFFSET, nextLecture.title, 4); // 42 chars max
+    drawCenteredTextAtOffset(LECTURER_OFFSET, nextLecture.lecturer, 3); // 54 chars max
     drawCenteredTextAtOffset(TIME_OFFSET, remainingTime, 27);
 
     #ifdef TIMETEXT_OFFSET
@@ -99,11 +100,7 @@ int main() {
     hidScanInput();
     if(hidKeysDown(CONTROLLER_P1_AUTO) & KEY_PLUS) break;
     usleep(MS_US(100)); // just so we dont use 100% of the cpu lol
-/*
-    if(timeleft_i == 0) timeleft_i = 9000;
-    else if(timeleft_i % 100 == 0) timeleft_i -= 41;
-    else timeleft_i--;
-*/
+
   }
 
   _exit:
@@ -115,7 +112,12 @@ int main() {
 
 }
 
-//////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////
+
 
 void drawScreen() {
   gfxFlushBuffers();
@@ -342,6 +344,10 @@ void showTimeUntilNextLecture() {
   drawCenteredTextAtOffset(offset + 4*10+5, "NEXT LECTURE:\0", 3);
 
   if(nextLecture.start == 0) drawCenteredTextAtOffset(offset + 4*10+5 + 3*10+5, "NO LECTURES LEFT.\0", 3);
+  else {
+    drawCenteredTextAtOffset(offset + 4*10+5 + 3*10+5, nextLecture.title, 3);
+    drawCenteredTextAtOffset(offset + 4*10+5 + 3*10+5 + 3*10+5, nextLecture.lecturer, 3);
+  }
 
   drawScreen();
 }
